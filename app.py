@@ -1,3 +1,4 @@
+import sqlite3
 import streamlit as st
 import pandas as pd
 from pathlib import Path
@@ -6,14 +7,15 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 DATA_DIR = Path(__file__).parent
-LOOKUP_PATH = DATA_DIR / "speed_cap_lookup.csv"
-FCFT_PATH = DATA_DIR / "fc_ft.csv"
+DB_PATH = DATA_DIR / "data.db"
+
+ADMIN_PASSWORD = st.secrets.get("admin_password", "admin")
 
 ATYPE_LABELS = {1: "CBD", 2: "CBD Fringe", 3: "Urban", 4: "Suburban", 5: "Rural"}
 
 PERIOD_HOURS = {"AM": 2, "Midday": 6, "PM": 4, "Night": 12, "Daily": 24}
 
-# Special FUNCL=0 entries not in fc_ft.csv
+# Special FUNCL=0 entries not in fc_ft
 SPECIAL_FTYPES = {
     30: "Walk access connector",
     0: "Centroid connector",
@@ -23,10 +25,15 @@ SPECIAL_FTYPES = {
 # Data loading
 # ---------------------------------------------------------------------------
 
+def _get_conn():
+    return sqlite3.connect(DB_PATH)
+
+
 @st.cache_data
 def load_lookup() -> pd.DataFrame:
-    df = pd.read_csv(LOOKUP_PATH, encoding="utf-8-sig")
-    # Ensure numeric types
+    conn = _get_conn()
+    df = pd.read_sql("SELECT * FROM speed_cap_lookup", conn)
+    conn.close()
     for col in ["ATYPE", "FUNCL", "FTYPE", "POSTEDSP", "Speed", "HourlyCapacity"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
@@ -34,35 +41,31 @@ def load_lookup() -> pd.DataFrame:
 
 @st.cache_data
 def load_fcft() -> pd.DataFrame:
-    return pd.read_csv(FCFT_PATH, encoding="utf-8-sig")
+    conn = _get_conn()
+    df = pd.read_sql("SELECT * FROM fc_ft", conn)
+    conn.close()
+    return df
+
+
+def save_lookup(df: pd.DataFrame):
+    conn = _get_conn()
+    df.to_sql("speed_cap_lookup", conn, if_exists="replace", index=False)
+    conn.close()
+    load_lookup.clear()
+
+
+def reset_lookup():
+    conn = _get_conn()
+    original = pd.read_sql("SELECT * FROM speed_cap_lookup_original", conn)
+    original.to_sql("speed_cap_lookup", conn, if_exists="replace", index=False)
+    conn.close()
+    load_lookup.clear()
 
 
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Speed & Capacity Lookup", layout="wide")
-
-# Enable Tab key to select the first option in dropdowns
-st.markdown(
-    """
-    <script>
-    const doc = window.parent.document;
-    doc.addEventListener('keydown', function(e) {
-        if (e.key === 'Tab') {
-            const menu = doc.querySelector('[class*="menu"]');
-            if (menu) {
-                const option = menu.querySelector('[class*="option"]');
-                if (option) {
-                    e.preventDefault();
-                    option.click();
-                }
-            }
-        }
-    }, true);
-    </script>
-    """,
-    unsafe_allow_html=True,
-)
 
 page = st.sidebar.radio("Navigate", ["Capacity Lookup", "Table Management"])
 
@@ -80,7 +83,7 @@ if page == "Capacity Lookup":
     all_rows = lookup[lookup["State"] == "All"]
     working = pd.concat([tx, all_rows]).drop_duplicates()
 
-    # ---- Build FUNCL and FTYPE options from fc_ft.csv ----
+    # ---- Build FUNCL and FTYPE options from fc_ft ----
     # Map FUNCL -> list of (FTYPE, Roadway name)
     funcl_to_ftypes: dict[int, list[tuple[int, str]]] = {}
     for _, row in fcft.iterrows():
@@ -215,12 +218,18 @@ if page == "Capacity Lookup":
             )
 
 # ===========================================================================
-# Page 2: Table Management
+# Page 2: Table Management (password-protected)
 # ===========================================================================
 elif page == "Table Management":
     st.title("Table Management")
 
-    tab_edit, tab_upload = st.tabs(["View & Edit", "Upload CSV"])
+    password = st.text_input("Admin Password", type="password")
+    if password != ADMIN_PASSWORD:
+        if password:
+            st.error("Incorrect password.")
+        st.stop()
+
+    tab_edit, tab_upload, tab_reset = st.tabs(["View & Edit", "Upload CSV", "Reset"])
 
     # ---- Tab 1: View & Edit ----
     with tab_edit:
@@ -228,16 +237,12 @@ elif page == "Table Management":
 
         lookup = load_lookup()
 
-        if "edited_lookup" not in st.session_state:
-            st.session_state.edited_lookup = None
-
         edited = st.data_editor(lookup, num_rows="dynamic", width='content', key="lookup_editor")
 
         col_save, col_discard = st.columns(2)
         with col_save:
             if st.button("Save Changes", type="primary"):
-                edited.to_csv(LOOKUP_PATH, index=False, encoding="utf-8-sig")
-                load_lookup.clear()
+                save_lookup(edited)
                 st.success("Lookup table saved.")
                 st.rerun()
         with col_discard:
@@ -269,7 +274,15 @@ elif page == "Table Management":
                 st.dataframe(new_df.head(20), width='content', hide_index=True)
                 st.caption(f"{len(new_df)} rows detected.")
                 if st.button("Confirm & Replace", type="primary"):
-                    new_df.to_csv(LOOKUP_PATH, index=False, encoding="utf-8-sig")
-                    load_lookup.clear()
+                    save_lookup(new_df)
                     st.success("Lookup table replaced successfully.")
                     st.rerun()
+
+    # ---- Tab 3: Reset to Original ----
+    with tab_reset:
+        st.subheader("Reset to Original Data")
+        st.warning("This will discard all edits and restore the lookup table to its original state.")
+        if st.button("Reset to Original", type="primary"):
+            reset_lookup()
+            st.success("Lookup table has been reset to original data.")
+            st.rerun()
