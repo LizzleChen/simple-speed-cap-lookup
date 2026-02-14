@@ -13,23 +13,41 @@ This tool allows users to query speed and hourly capacity values based on a comb
 
 Results include the modeled **speed**, **hourly capacity**, and BPR curve parameters (**Alpha** and **Beta**). A built-in calculator shows period-based capacities (AM, Midday, PM, Night, Daily) adjusted by the number of lanes.
 
-## Data Files
+## Data Storage
 
-| File | Description |
+Data is stored in a SQLite database (`data.db`) with the following tables:
+
+| Table | Description |
 |---|---|
-| `speed_cap_lookup.csv` | Main lookup table with speed, capacity, and BPR parameters by State/ATYPE/FUNCL/FTYPE/POSTEDSP |
-| `fc_ft.csv` | Reference table mapping Functional Class and Facility Type codes to roadway descriptions |
+| `speed_cap_lookup` | Main lookup table with speed, capacity, and BPR parameters by State/ATYPE/FUNCL/FTYPE/POSTEDSP |
+| `speed_cap_lookup_original` | Snapshot of the original lookup data, used for the reset feature |
+| `fc_ft` | Reference table mapping Functional Class and Facility Type codes to roadway descriptions |
+
+To initialize the database from CSV files, run the one-time migration script:
+
+```bash
+python migrate_to_sqlite.py
+```
 
 ## Pages
 
 - **Capacity Lookup** — cascading dropdowns to filter and display speed/capacity results
-- **Table Management** — view, edit, and upload replacement CSV data for the lookup table
+- **Table Management** (password-protected) — view, edit, upload replacement CSV data, or reset the lookup table to its original state
 
 ## Setup
 
 ```bash
 pip install -r requirements.txt
+python migrate_to_sqlite.py
 streamlit run app.py
+```
+
+## Configuration
+
+The admin password for the Table Management page defaults to `admin`. To change it, create `.streamlit/secrets.toml`:
+
+```toml
+admin_password = "your_password"
 ```
 
 ## Requirements
