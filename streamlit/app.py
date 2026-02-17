@@ -6,7 +6,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DATA_DIR = Path(__file__).parent
+DATA_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = DATA_DIR / "data.db"
 
 ADMIN_PASSWORD = st.secrets.get("admin_password", "admin")

@@ -4,7 +4,7 @@ import sqlite3
 import pandas as pd
 from pathlib import Path
 
-DATA_DIR = Path(__file__).parent
+DATA_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = DATA_DIR / "data.db"
 LOOKUP_CSV = DATA_DIR / "speed_cap_lookup.csv"
 FCFT_CSV = DATA_DIR / "fc_ft.csv"
