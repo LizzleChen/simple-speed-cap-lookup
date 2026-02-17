@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin - Speed &amp; Capacity Lookup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 24px; color: #1a1a1a; }
+  h1 { margin-bottom: 8px; }
+  h2 { margin: 24px 0 12px; }
+  nav { margin-bottom: 20px; font-size: 14px; }
+  nav a { color: #2563eb; text-decoration: none; }
+  .form-group { margin-bottom: 16px; }
+  label { font-weight: 600; font-size: 14px; margin-right: 8px; }
+  input[type=password], input[type=file] { padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  button { padding: 8px 16px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 600; }
+  .btn-primary { background: #2563eb; color: #fff; }
+  .btn-primary:hover { background: #1d4ed8; }
+  .btn-danger { background: #dc2626; color: #fff; }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn-secondary { background: #e5e7eb; color: #1a1a1a; }
+  .msg { padding: 10px 14px; border-radius: 6px; margin: 12px 0; font-size: 14px; }
+  .msg-ok { background: #d1fae5; color: #065f46; }
+  .msg-err { background: #fee2e2; color: #991b1b; }
+  .hidden { display: none; }
+  table { border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  th, td { padding: 4px 10px; border: 1px solid #ddd; }
+  th { background: #f0f0f0; font-weight: 600; position: sticky; top: 0; }
+  td input { border: 1px solid #ddd; padding: 2px 6px; width: 80px; font-size: 13px; }
+  .table-wrap { max-height: 500px; overflow: auto; border: 1px solid #ccc; border-radius: 6px; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 24px 0; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<nav><a href="/">Lookup</a></nav>
+<h1>Table Management</h1>
+
+<div class="form-group">
+  <label for="password">Admin Password</label>
+  <input type="password" id="password" placeholder="Enter password">
+  <button class="btn-primary" onclick="unlock()">Unlock</button>
+</div>
+<div id="msg-auth" class="msg hidden"></div>
+
+<div id="admin-panel" class="hidden">
+
+  <!-- View & Edit -->
+  <h2>Speed &amp; Capacity Lookup Table</h2>
+  <div class="table-wrap"><table id="data-table"><thead></thead><tbody></tbody></table></div>
+  <div class="actions">
+    <button class="btn-primary" onclick="saveChanges()">Save Changes</button>
+  </div>
+  <div id="msg-save" class="msg hidden"></div>
+
+  <hr>
+
+  <!-- Upload CSV -->
+  <h2>Replace Lookup Table via CSV Upload</h2>
+  <div class="form-group">
+    <input type="file" id="csv-file" accept=".csv">
+    <button class="btn-primary" onclick="uploadCSV()">Upload &amp; Replace</button>
+  </div>
+  <div id="msg-upload" class="msg hidden"></div>
+
+  <hr>
+
+  <!-- Reset -->
+  <h2>Reset to Original Data</h2>
+  <p style="color:#b91c1c;font-size:14px;margin-bottom:8px;">This will discard all edits and restore the lookup table to its original state.</p>
+  <button class="btn-danger" onclick="resetData()">Reset to Original</button>
+  <div id="msg-reset" class="msg hidden"></div>
+</div>
+
+<script>
+let tableData = [];
+let columns = [];
+
+function pw() { return document.getElementById('password').value; }
+
+function showMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'msg-ok' : 'msg-err');
+  el.classList.remove('hidden');
+}
+
+async function unlock() {
+  const r = await fetch('/api/admin/data?password=' + encodeURIComponent(pw()));
+  if (!r.ok) {
+    showMsg('msg-auth', 'Incorrect password.', false);
+    document.getElementById('admin-panel').classList.add('hidden');
+    return;
+  }
+  document.getElementById('msg-auth').classList.add('hidden');
+  tableData = await r.json();
+  document.getElementById('admin-panel').classList.remove('hidden');
+  renderTable();
+}
+
+function renderTable() {
+  if (tableData.length === 0) return;
+  columns = Object.keys(tableData[0]);
+  const thead = document.querySelector('#data-table thead');
+  const tbody = document.querySelector('#data-table tbody');
+  thead.innerHTML = '<tr>' + columns.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+  tbody.innerHTML = '';
+  tableData.forEach((row, i) => {
+    const tr = document.createElement('tr');
+    columns.forEach(col => {
+      const td = document.createElement('td');
+      const inp = document.createElement('input');
+      inp.value = row[col] != null ? row[col] : '';
+      inp.dataset.row = i;
+      inp.dataset.col = col;
+      inp.addEventListener('change', e => { tableData[i][col] = e.target.value; });
+      td.appendChild(inp);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+async function saveChanges() {
+  const r = await fetch('/api/admin/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({password: pw(), data: tableData})
+  });
+  const d = await r.json();
+  if (d.ok) showMsg('msg-save', 'Lookup table saved.', true);
+  else showMsg('msg-save', d.error || 'Save failed.', false);
+}
+
+async function uploadCSV() {
+  const file = document.getElementById('csv-file').files[0];
+  if (!file) { showMsg('msg-upload', 'Select a CSV file first.', false); return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('password', pw());
+  const r = await fetch('/api/admin/upload', {method: 'POST', body: fd});
+  const d = await r.json();
+  if (d.ok) {
+    showMsg('msg-upload', 'Lookup table replaced. ' + d.rows + ' rows loaded.', true);
+    unlock(); // refresh table
+  } else {
+    showMsg('msg-upload', d.error || 'Upload failed.', false);
+  }
+}
+
+async function resetData() {
+  if (!confirm('Are you sure you want to reset to original data? All edits will be lost.')) return;
+  const r = await fetch('/api/admin/reset', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({password: pw()})
+  });
+  const d = await r.json();
+  if (d.ok) {
+    showMsg('msg-reset', 'Lookup table reset to original data.', true);
+    unlock(); // refresh table
+  } else {
+    showMsg('msg-reset', d.error || 'Reset failed.', false);
+  }
+}
+</script>
+</body>
+</html>

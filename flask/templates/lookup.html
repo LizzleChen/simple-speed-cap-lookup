@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Speed &amp; Capacity Lookup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 24px; color: #1a1a1a; }
+  h1 { margin-bottom: 24px; }
+  nav { margin-bottom: 20px; font-size: 14px; }
+  nav a { color: #2563eb; text-decoration: none; }
+  .form-group { margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 14px; }
+  select, input[type=number] { width: 100%; max-width: 400px; padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  select:disabled { background: #f5f5f5; }
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 24px 0; }
+  .metric { background: #f8f9fa; border-radius: 8px; padding: 16px; text-align: center; }
+  .metric .label { font-size: 12px; color: #666; text-transform: uppercase; margin-bottom: 4px; }
+  .metric .value { font-size: 28px; font-weight: 700; }
+  table { border-collapse: collapse; margin-top: 16px; }
+  th, td { padding: 8px 16px; border: 1px solid #ddd; text-align: right; font-size: 14px; }
+  th { background: #f0f0f0; font-weight: 600; text-align: center; }
+  td:first-child, th:first-child { text-align: left; }
+  .hidden { display: none; }
+  .info { color: #2563eb; font-size: 14px; margin-top: 4px; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 24px 0; }
+</style>
+</head>
+<body>
+<nav><a href="/admin">Admin</a></nav>
+<h1>Speed &amp; Capacity Lookup</h1>
+
+<div class="form-group">
+  <label for="funcl">Functional Class (FUNCL)</label>
+  <select id="funcl"><option value="">Select a functional class...</option></select>
+</div>
+
+<div class="form-group">
+  <label for="ftype">Facility Type (FTYPE)</label>
+  <select id="ftype"><option value="">Select a facility type...</option></select>
+</div>
+
+<div class="form-group">
+  <label for="atype">Area Type</label>
+  <select id="atype" disabled><option value="">Select an area type...</option></select>
+</div>
+
+<div class="form-group">
+  <label for="speed">Posted Speed</label>
+  <select id="speed" disabled><option value="">Select a posted speed...</option></select>
+  <div id="speed-info" class="info hidden"></div>
+</div>
+
+<div id="results" class="hidden">
+  <hr>
+  <div class="metrics">
+    <div class="metric"><div class="label">Speed</div><div class="value" id="r-speed"></div></div>
+    <div class="metric"><div class="label">Hourly Capacity</div><div class="value" id="r-cap"></div></div>
+    <div class="metric"><div class="label">Alpha</div><div class="value" id="r-alpha"></div></div>
+    <div class="metric"><div class="label">Beta</div><div class="value" id="r-beta"></div></div>
+  </div>
+
+  <div class="form-group">
+    <label for="lanes">Number of Lanes</label>
+    <input type="number" id="lanes" value="1" min="1" step="1" style="max-width:120px">
+  </div>
+
+  <table id="period-table">
+    <thead><tr><th>Period</th><th>Hours</th><th>Base Capacity (per lane)</th><th>Adjusted Capacity (&times; lanes)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+const PERIOD_HOURS = {AM:2, Midday:6, PM:4, Night:12, Daily:24};
+const $ = id => document.getElementById(id);
+
+let currentResult = null;
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+
+function clearSelect(el, placeholder, disable) {
+  el.innerHTML = '<option value="">' + placeholder + '</option>';
+  if (disable !== false) el.disabled = true;
+}
+
+function hideResults() {
+  $('results').classList.add('hidden');
+  currentResult = null;
+}
+
+// --- Load both FUNCLs and FTYPEs on page load ---
+(async () => {
+  const [funcls, ftypes] = await Promise.all([fetchJSON('/api/funcls'), fetchJSON('/api/ftypes')]);
+  const fsel = $('funcl');
+  funcls.forEach(f => { const o = document.createElement('option'); o.value = f; o.textContent = f; fsel.appendChild(o); });
+  const tsel = $('ftype');
+  ftypes.forEach(f => { const o = document.createElement('option'); o.value = f.ftype; o.textContent = f.ftype + ' - ' + f.name; tsel.appendChild(o); });
+})();
+
+async function loadAtypes() {
+  const funcl = $('funcl').value;
+  const ftype = $('ftype').value;
+  clearSelect($('atype'), 'Select an area type...');
+  clearSelect($('speed'), 'Select a posted speed...');
+  $('speed-info').classList.add('hidden');
+  hideResults();
+
+  if (!funcl && !ftype) return;
+  let url = '/api/atypes?';
+  const params = [];
+  if (ftype) params.push('ftype=' + ftype);
+  if (funcl) params.push('funcl=' + funcl);
+  url += params.join('&');
+  const atypes = await fetchJSON(url);
+  const sel = $('atype');
+  atypes.forEach(a => { const o = document.createElement('option'); o.value = a.value; o.textContent = a.value + ' - ' + a.label; sel.appendChild(o); });
+  sel.disabled = false;
+}
+
+// --- FUNCL change -> filter FTYPEs, then load ATYPEs ---
+$('funcl').addEventListener('change', async () => {
+  const funcl = $('funcl').value;
+  // Reset FTYPE to all or filtered list
+  const sel = $('ftype');
+  sel.innerHTML = '<option value="">Select a facility type...</option>';
+  const url = funcl ? '/api/ftypes?funcl=' + funcl : '/api/ftypes';
+  const ftypes = await fetchJSON(url);
+  ftypes.forEach(f => { const o = document.createElement('option'); o.value = f.ftype; o.textContent = f.ftype + ' - ' + f.name; sel.appendChild(o); });
+  loadAtypes();
+});
+
+// --- FTYPE change -> load ATYPEs ---
+$('ftype').addEventListener('change', () => {
+  loadAtypes();
+});
+
+// --- ATYPE change -> load Speeds ---
+$('atype').addEventListener('change', async () => {
+  const funcl = $('funcl').value;
+  const ftype = $('ftype').value;
+  const atype = $('atype').value;
+  clearSelect($('speed'), 'Select a posted speed...');
+  $('speed-info').classList.add('hidden');
+  hideResults();
+
+  if (!atype) return;
+  let url = '/api/speeds?atype=' + atype;
+  if (ftype) url += '&ftype=' + ftype;
+  if (funcl) url += '&funcl=' + funcl;
+  const speeds = await fetchJSON(url);
+
+  if (speeds.length === 0) {
+    $('speed-info').textContent = 'Posted speed is not applicable for this roadway type.';
+    $('speed-info').classList.remove('hidden');
+    // Auto-lookup with no speed
+    doLookup(funcl, ftype, atype, null);
+    return;
+  }
+  const sel = $('speed');
+  speeds.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; sel.appendChild(o); });
+  sel.disabled = false;
+});
+
+// --- Speed change -> lookup ---
+$('speed').addEventListener('change', () => {
+  const funcl = $('funcl').value;
+  const ftype = $('ftype').value;
+  const atype = $('atype').value;
+  const speed = $('speed').value;
+  hideResults();
+  if (!speed) return;
+  doLookup(funcl, ftype, atype, speed);
+});
+
+async function doLookup(funcl, ftype, atype, speed) {
+  let url = '/api/lookup?atype=' + atype;
+  if (ftype) url += '&ftype=' + ftype;
+  if (funcl) url += '&funcl=' + funcl;
+  if (speed) url += '&speed=' + speed;
+  const data = await fetchJSON(url);
+  if (!data) return;
+  currentResult = data;
+  $('r-speed').textContent = data.Speed;
+  $('r-cap').textContent = data.HourlyCapacity.toLocaleString();
+  $('r-alpha').textContent = data.Alpha;
+  $('r-beta').textContent = data.Beta;
+  $('results').classList.remove('hidden');
+  buildPeriodTable();
+}
+
+function buildPeriodTable() {
+  if (!currentResult) return;
+  const lanes = parseInt($('lanes').value) || 1;
+  const cap = currentResult.HourlyCapacity;
+  const tbody = $('period-table').querySelector('tbody');
+  tbody.innerHTML = '';
+  for (const [period, hours] of Object.entries(PERIOD_HOURS)) {
+    const base = cap * hours;
+    const adj = base * lanes;
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + period + '</td><td>' + hours + '</td><td>' + base.toLocaleString() + '</td><td>' + adj.toLocaleString() + '</td>';
+    tbody.appendChild(tr);
+  }
+}
+
+$('lanes').addEventListener('input', buildPeriodTable);
+</script>
+</body>
+</html>
